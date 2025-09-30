@@ -1,25 +1,10 @@
-import { Fn, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { QuoteOfTheDayAPI } from "./get-qotd";
-import {
-  BlockPublicAccess,
-  Bucket,
-  BucketAccessControl,
-  CorsRule,
-  HttpMethods,
-} from "aws-cdk-lib/aws-s3";
-import {
-  CloudFrontAllowedMethods,
-  CloudFrontWebDistribution,
-  Distribution,
-  OriginAccessIdentity,
-  OriginProtocolPolicy,
-  ViewerProtocolPolicy,
-} from "aws-cdk-lib/aws-cloudfront";
+import { Bucket } from "aws-cdk-lib/aws-s3";
+import { Distribution, OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
-import path = require("path");
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 
 const DOMAIN_NAME = "fhudson.com";
