@@ -20,6 +20,12 @@ import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import path = require("path");
+import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+
+const DOMAIN_NAME = "fhudson.com";
+const SUB_DOMAIN_NAME = "*.fhudson.com";
+const CERTIFICATE_ARN =
+  "arn:aws:acm:us-east-1:457471291771:certificate/6289263c-411b-4981-9c2a-a872d19fe0e7";
 
 export class InfraStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -40,7 +46,14 @@ export class InfraStack extends Stack {
     const s3AOI = new OriginAccessIdentity(this, "s3AOI");
     s3Bucket.grantRead(s3AOI);
 
-    const backendCloudfront = new Distribution(this, "PersonalSiteCloudfront", {
+    const certificate = Certificate.fromCertificateArn(
+      this,
+      "StaticSiteCertificate",
+      CERTIFICATE_ARN
+    );
+
+    const cloudfront = new Distribution(this, "PersonalSiteCloudfront", {
+      domainNames: [DOMAIN_NAME, SUB_DOMAIN_NAME],
       defaultBehavior: {
         origin: S3BucketOrigin.withOriginAccessIdentity(s3Bucket, {
           originAccessIdentity: s3AOI,
@@ -67,6 +80,7 @@ export class InfraStack extends Stack {
           ),
         },
       },
+      certificate,
     });
   }
 }
