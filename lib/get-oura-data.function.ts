@@ -3,31 +3,73 @@ import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 const OURA_API_KEY_SECRET_ARN =
   "arn:aws:secretsmanager:us-east-1:457471291771:secret:OURA_API_KEY-tXksnW";
 
-const fetchData = async () => {
-  const secretResponse = await fetch(
-    `http://localhost:2773/secretsmanager/get?secretId=${encodeURIComponent(
-      OURA_API_KEY_SECRET_ARN
-    )}&withDecryption=true`,
-    {
-      headers: {
-        "X-Aws-Parameters-Secrets-Token": process.env.AWS_SESSION_TOKEN!!,
-      },
-    }
-  );
+const authorize = async () => {
+  const SECRETS_URL = `http://localhost:2773/secretsmanager/get?secretId=${encodeURIComponent(
+    OURA_API_KEY_SECRET_ARN
+  )}&withDecryption=true`;
 
-  const secretsJSON = await secretResponse.json();
+  const sessionToken = process.env.AWS_SESSION_TOKEN;
 
-  const OURA_API_KEY = JSON.parse(secretsJSON.SecretString)["OURA_API_KEY"];
+  if (!sessionToken) throw Error("[authorize] No AWS session token found");
 
-  const OURA_ENDPOINT =
-    "https://api.ouraring.com/v2/usercollection/personal_info";
-  const response = await fetch(OURA_ENDPOINT, {
-    headers: { Authorization: `Bearer ${OURA_API_KEY}` },
+  let secretsResponse: any = await fetch(SECRETS_URL, {
+    headers: {
+      "X-Aws-Parameters-Secrets-Token": sessionToken,
+    },
   });
 
-  const json = (await response.json()) as Response;
+  secretsResponse = await secretsResponse.json();
 
-  return json;
+  const OURA_API_KEY: string = JSON.parse(secretsResponse.SecretString)[
+    "OURA_API_KEY"
+  ];
+
+  return OURA_API_KEY;
+};
+
+const fetchEndpointData = async (endpoint: string, authToken: string) => {
+  let response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+
+  response = await response.json();
+
+  return response;
+};
+
+const fetchData = async () => {
+  const OURA_API_KEY = await authorize();
+
+  const OURA_SLEEP_ENDPOINT =
+    "https://api.ouraring.com/v2/usercollection/daily_sleep";
+  let sleepDataRequest = fetchEndpointData(OURA_SLEEP_ENDPOINT, OURA_API_KEY);
+
+  const OURA_ACTIVITY_ENDPOINT =
+    "https://api.ouraring.com/v2/usercollection/daily_activity";
+  let activityDataRequest = fetchEndpointData(
+    OURA_ACTIVITY_ENDPOINT,
+    OURA_API_KEY
+  );
+
+  const OURA_READINESS_ENDPOINT =
+    "https://api.ouraring.com/v2/usercollection/daily_readiness";
+  let readinessDataRequest = fetchEndpointData(
+    OURA_READINESS_ENDPOINT,
+    OURA_API_KEY
+  );
+
+  const data = await Promise.all([
+    sleepDataRequest,
+    activityDataRequest,
+    readinessDataRequest,
+  ]);
+  const [sleepData, activityData, readinessData] = data;
+
+  return {
+    readiness: readinessData,
+    sleep: sleepData,
+    activity: activityData,
+  };
 };
 
 export const handler = async (
