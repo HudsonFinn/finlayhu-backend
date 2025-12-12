@@ -1,5 +1,4 @@
-import { Stack, StackProps, RemovalPolicy } from "aws-cdk-lib";
-import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
+import { Stack, StackProps, RemovalPolicy, Duration } from "aws-cdk-lib";
 import { OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
 import { Rule, Schedule } from "aws-cdk-lib/aws-events";
 import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
@@ -24,12 +23,12 @@ export class OuraStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    const getOuraDataRole = new Role(this, "get-oura-data-role", {
-      roleName: "get-oura-data-role",
+    const saveOuraDataRole = new Role(this, "save-oura-data-role", {
+      roleName: "save-oura-data-role",
       assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
     });
 
-    getOuraDataRole.addToPolicy(
+    saveOuraDataRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
@@ -41,9 +40,10 @@ export class OuraStack extends Stack {
       })
     );
 
-    const getOuraDataFunction = new NodejsFunction(this, "get-oura-data", {
-      entry: "./lib/get-oura-data.function.ts",
-      role: getOuraDataRole,
+    const saveOuraDataFunction = new NodejsFunction(this, "save-oura-data", {
+      entry: "./lib/save-oura-data.function.ts",
+      role: saveOuraDataRole,
+      timeout: Duration.seconds(10),
       environment: {
         BUCKET_NAME: this.ouraDataBucket.bucketName,
       },
@@ -55,22 +55,23 @@ export class OuraStack extends Stack {
       "arn:aws:lambda:us-east-1:177933569100:layer:AWS-Parameters-and-Secrets-Lambda-Extension:20"
     );
 
-    getOuraDataFunction.addLayers(parametersAndSecretsExtension);
+    saveOuraDataFunction.addLayers(parametersAndSecretsExtension);
 
     // Grant Lambda function write permissions to S3 bucket
-    this.ouraDataBucket.grantReadWrite(getOuraDataFunction);
+    this.ouraDataBucket.grantReadWrite(saveOuraDataFunction);
 
-    // Create EventBridge rule to trigger Lambda daily at 11:59 PM UTC
-    const dailyRule = new Rule(this, "DailyOuraDataRule", {
+    // Create EventBridge rule to trigger Lambda hourly
+    const hourlyRule = new Rule(this, "HourlyOuraDataRule", {
       schedule: Schedule.cron({
-        minute: "59",
-        hour: "23",
+        minute: "0",
+        hour: "*",
       }),
-      description: "Trigger Oura data collection daily at 11:59 PM UTC",
+      description:
+        "Trigger Oura data collection hourly at the top of each hour",
     });
 
     // Add Lambda function as target for the EventBridge rule
-    dailyRule.addTarget(new LambdaFunction(getOuraDataFunction));
+    hourlyRule.addTarget(new LambdaFunction(saveOuraDataFunction));
 
     const s3AOI = new OriginAccessIdentity(this, "s3AOI");
     this.ouraDataBucket.grantRead(s3AOI);

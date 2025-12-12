@@ -81,9 +81,11 @@ const saveToS3 = async (data: any) => {
     throw new Error("BUCKET_NAME environment variable is not set");
   }
 
-  // Create filename with current date (YYYY-MM-DD format)
-  const currentDate = new Date().toISOString().split("T")[0];
-  const fileName = `oura-data-${currentDate}.json`;
+  // Create filename with current date and hour (YYYY-MM-DD-HH format)
+  const now = new Date();
+  const currentDate = now.toISOString().split("T")[0];
+  const currentHour = now.getUTCHours().toString().padStart(2, "0");
+  const fileName = `oura-data-${currentDate}-${currentHour}.json`;
 
   const command = new PutObjectCommand({
     Bucket: bucketName,

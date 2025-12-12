@@ -1,5 +1,5 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
 const s3Client = new S3Client({ region: "us-east-1" });
 
@@ -9,15 +9,42 @@ const fetchFromS3 = async (date: string): Promise<any> => {
     throw new Error("BUCKET_NAME environment variable is not set");
   }
 
-  const fileName = `oura-data-${date}.json`;
+  // List all files for the given date
+  const prefix = `oura-data-${date}-`;
 
   try {
-    const command = new GetObjectCommand({
+    const listCommand = new ListObjectsV2Command({
       Bucket: bucketName,
-      Key: fileName,
+      Prefix: prefix,
     });
 
-    const response = await s3Client.send(command);
+    const listResponse = await s3Client.send(listCommand);
+
+    if (!listResponse.Contents || listResponse.Contents.length === 0) {
+      throw new Error(`No data found for date: ${date}`);
+    }
+
+    // Sort files by key name (chronologically due to YYYY-MM-DD-HH format)
+    // and get the most recent one
+    const sortedFiles = listResponse.Contents.sort((a, b) => {
+      const keyA = a.Key || "";
+      const keyB = b.Key || "";
+      return keyB.localeCompare(keyA);
+    });
+
+    const mostRecentFile = sortedFiles[0].Key;
+
+    if (!mostRecentFile) {
+      throw new Error(`No data found for date: ${date}`);
+    }
+
+    // Fetch the most recent file
+    const getCommand = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: mostRecentFile,
+    });
+
+    const response = await s3Client.send(getCommand);
 
     if (!response.Body) {
       throw new Error("No data found in S3 object");
