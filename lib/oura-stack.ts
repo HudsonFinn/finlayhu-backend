@@ -1,6 +1,8 @@
 import { Stack, StackProps, RemovalPolicy } from "aws-cdk-lib";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
+import { Rule, Schedule } from "aws-cdk-lib/aws-events";
+import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
 import {
   Effect,
   PolicyStatement,
@@ -13,10 +15,12 @@ import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 export class OuraStack extends Stack {
+  public readonly ouraDataBucket: Bucket;
+
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const s3Bucket = new Bucket(this, "OuraData", {
+    this.ouraDataBucket = new Bucket(this, "OuraData", {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
@@ -40,6 +44,9 @@ export class OuraStack extends Stack {
     const getOuraDataFunction = new NodejsFunction(this, "get-oura-data", {
       entry: "./lib/get-oura-data.function.ts",
       role: getOuraDataRole,
+      environment: {
+        BUCKET_NAME: this.ouraDataBucket.bucketName,
+      },
     });
 
     const parametersAndSecretsExtension = LayerVersion.fromLayerVersionArn(
@@ -50,7 +57,22 @@ export class OuraStack extends Stack {
 
     getOuraDataFunction.addLayers(parametersAndSecretsExtension);
 
+    // Grant Lambda function write permissions to S3 bucket
+    this.ouraDataBucket.grantReadWrite(getOuraDataFunction);
+
+    // Create EventBridge rule to trigger Lambda daily at 11:59 PM UTC
+    const dailyRule = new Rule(this, "DailyOuraDataRule", {
+      schedule: Schedule.cron({
+        minute: "59",
+        hour: "23",
+      }),
+      description: "Trigger Oura data collection daily at 11:59 PM UTC",
+    });
+
+    // Add Lambda function as target for the EventBridge rule
+    dailyRule.addTarget(new LambdaFunction(getOuraDataFunction));
+
     const s3AOI = new OriginAccessIdentity(this, "s3AOI");
-    s3Bucket.grantRead(s3AOI);
+    this.ouraDataBucket.grantRead(s3AOI);
   }
 }

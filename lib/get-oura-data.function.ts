@@ -1,7 +1,10 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const OURA_API_KEY_SECRET_ARN =
   "arn:aws:secretsmanager:us-east-1:457471291771:secret:OURA_API_KEY-tXksnW";
+
+const s3Client = new S3Client({ region: "us-east-1" });
 
 const authorize = async () => {
   const SECRETS_URL = `http://localhost:2773/secretsmanager/get?secretId=${encodeURIComponent(
@@ -72,13 +75,38 @@ const fetchData = async () => {
   };
 };
 
+const saveToS3 = async (data: any) => {
+  const bucketName = process.env.BUCKET_NAME;
+  if (!bucketName) {
+    throw new Error("BUCKET_NAME environment variable is not set");
+  }
+
+  // Create filename with current date (YYYY-MM-DD format)
+  const currentDate = new Date().toISOString().split("T")[0];
+  const fileName = `oura-data-${currentDate}.json`;
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: fileName,
+    Body: JSON.stringify(data, null, 2),
+    ContentType: "application/json",
+  });
+
+  await s3Client.send(command);
+
+  return fileName;
+};
+
 export const handler = async (
   _event: APIGatewayEvent,
   _context: Context
 ): Promise<APIGatewayProxyResult> => {
   let todaysData;
+  let savedFileName;
+
   try {
     todaysData = await fetchData();
+    savedFileName = await saveToS3(todaysData);
   } catch (e) {
     return {
       statusCode: 500,
@@ -88,7 +116,7 @@ export const handler = async (
         "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
       },
       body: JSON.stringify({
-        message: `Failed to fetch data from oura: ${e}`,
+        message: `Failed to fetch data from oura or save to S3: ${e}`,
       }),
     };
   }
@@ -100,6 +128,9 @@ export const handler = async (
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
     },
-    body: JSON.stringify(todaysData),
+    body: JSON.stringify({
+      message: `Data saved successfully to ${savedFileName}`,
+      data: todaysData,
+    }),
   };
 };

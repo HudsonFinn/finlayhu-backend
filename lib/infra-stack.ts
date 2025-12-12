@@ -12,8 +12,12 @@ const SUB_DOMAIN_NAME = "*.fhudson.com";
 const CERTIFICATE_ARN =
   "arn:aws:acm:us-east-1:457471291771:certificate/6289263c-411b-4981-9c2a-a872d19fe0e7";
 
+interface InfraStackProps extends StackProps {
+  ouraDataBucket: Bucket;
+}
+
 export class InfraStack extends Stack {
-  constructor(scope: Construct, id: string, props?: StackProps) {
+  constructor(scope: Construct, id: string, props: InfraStackProps) {
     super(scope, id, props);
 
     const s3Bucket = new Bucket(this, "ImportBucket", {
@@ -27,6 +31,31 @@ export class InfraStack extends Stack {
     const quoteOfTheDayAPI = new LambdaRestApi(this, "get-qotd-api", {
       handler: lambdaFunction,
     });
+
+    // Create Lambda function to fetch Oura data from S3
+    const fetchOuraDataFunction = new NodejsFunction(this, "fetch-oura-data", {
+      entry: "./lib/fetch-oura-data.function.ts",
+      environment: {
+        BUCKET_NAME: props.ouraDataBucket.bucketName,
+      },
+    });
+
+    // Grant read permissions to the Oura data bucket
+    props.ouraDataBucket.grantRead(fetchOuraDataFunction);
+
+    // Create API Gateway for Oura data with proxy integration
+    const ouraDataAPI = new LambdaRestApi(this, "fetch-oura-data-api", {
+      handler: fetchOuraDataFunction,
+      proxy: false,
+    });
+
+    // Add root resource for current day's data
+    const ouraRoot = ouraDataAPI.root.addResource("api").addResource("oura");
+    ouraRoot.addMethod("GET");
+
+    // Add date parameter resource for specific dates
+    const ouraDate = ouraRoot.addResource("{date}");
+    ouraDate.addMethod("GET");
 
     const s3AOI = new OriginAccessIdentity(this, "s3AOI");
     s3Bucket.grantRead(s3AOI);
@@ -62,6 +91,12 @@ export class InfraStack extends Stack {
           origin: new HttpOrigin(
             `${quoteOfTheDayAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${quoteOfTheDayAPI.deploymentStage.stageName}` }
+          ),
+        },
+        "/api/oura*": {
+          origin: new HttpOrigin(
+            `${ouraDataAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
+            { originPath: `/${ouraDataAPI.deploymentStage.stageName}` }
           ),
         },
       },
