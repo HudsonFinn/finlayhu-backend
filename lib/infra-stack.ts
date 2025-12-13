@@ -1,11 +1,26 @@
-import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import {
+  RemovalPolicy,
+  Stack,
+  StackProps,
+  Duration,
+  CfnOutput,
+} from "aws-cdk-lib";
 import { Construct } from "constructs";
-import { Bucket } from "aws-cdk-lib/aws-s3";
-import { Distribution, OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
+import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
+import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
+import {
+  Distribution,
+  OriginAccessIdentity,
+  CachePolicy,
+  CacheHeaderBehavior,
+  CacheQueryStringBehavior,
+  AllowedMethods,
+} from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 
 const DOMAIN_NAME = "fhudson.com";
 const SUB_DOMAIN_NAME = "*.fhudson.com";
@@ -66,12 +81,43 @@ export class InfraStack extends Stack {
       CERTIFICATE_ARN
     );
 
+    // Custom cache policy for Oura API (1 hour TTL)
+    const ouraCachePolicy = new CachePolicy(this, "OuraCachePolicy", {
+      cachePolicyName: "OuraDataCachePolicy",
+      comment: "Cache policy for Oura API with 1 hour TTL",
+      minTtl: Duration.seconds(0),
+      defaultTtl: Duration.hours(1),
+      maxTtl: Duration.hours(1),
+      headerBehavior: CacheHeaderBehavior.allowList(
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers"
+      ),
+      queryStringBehavior: CacheQueryStringBehavior.all(),
+    });
+
+    // Custom cache policy for QOTD API (24 hour TTL)
+    const qotdCachePolicy = new CachePolicy(this, "QOTDCachePolicy", {
+      cachePolicyName: "QOTDCachePolicy",
+      comment: "Cache policy for Quote of the Day API with 24 hour TTL",
+      minTtl: Duration.seconds(0),
+      defaultTtl: Duration.hours(24),
+      maxTtl: Duration.hours(24),
+      headerBehavior: CacheHeaderBehavior.allowList(
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers"
+      ),
+      queryStringBehavior: CacheQueryStringBehavior.all(),
+    });
+
     const cloudfront = new Distribution(this, "PersonalSiteCloudfront", {
       domainNames: [DOMAIN_NAME, SUB_DOMAIN_NAME],
       defaultBehavior: {
         origin: S3BucketOrigin.withOriginAccessIdentity(s3Bucket, {
           originAccessIdentity: s3AOI,
         }),
+        cachePolicy: CachePolicy.CACHING_OPTIMIZED,
       },
       defaultRootObject: "index.html",
       errorResponses: [
@@ -92,15 +138,66 @@ export class InfraStack extends Stack {
             `${quoteOfTheDayAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${quoteOfTheDayAPI.deploymentStage.stageName}` }
           ),
+          cachePolicy: qotdCachePolicy,
+          allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
         "/api/oura*": {
           origin: new HttpOrigin(
             `${ouraDataAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${ouraDataAPI.deploymentStage.stageName}` }
           ),
+          cachePolicy: ouraCachePolicy,
+          allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
       },
       certificate,
+    });
+
+    // Create Lambda function for CloudFront cache invalidation
+    const invalidateCloudfrontFunction = new NodejsFunction(
+      this,
+      "invalidate-cloudfront",
+      {
+        entry: "./lib/invalidate-cloudfront.function.ts",
+        environment: {
+          DISTRIBUTION_ID: cloudfront.distributionId,
+        },
+      }
+    );
+
+    // Grant Lambda permission to create CloudFront invalidations
+    invalidateCloudfrontFunction.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["cloudfront:CreateInvalidation"],
+        resources: [
+          `arn:aws:cloudfront::${this.account}:distribution/${cloudfront.distributionId}`,
+        ],
+      })
+    );
+
+    // Set up S3 event notification to trigger Lambda on object creation/modification
+    s3Bucket.addEventNotification(
+      EventType.OBJECT_CREATED,
+      new LambdaDestination(invalidateCloudfrontFunction)
+    );
+
+    s3Bucket.addEventNotification(
+      EventType.OBJECT_REMOVED,
+      new LambdaDestination(invalidateCloudfrontFunction)
+    );
+
+    // Output the CloudFront distribution ID for easy reference
+    new CfnOutput(this, "CloudFrontDistributionId", {
+      value: cloudfront.distributionId,
+      description: "CloudFront Distribution ID",
+      exportName: "CloudFrontDistributionId",
+    });
+
+    // Output the CloudFront domain name
+    new CfnOutput(this, "CloudFrontDomainName", {
+      value: cloudfront.distributionDomainName,
+      description: "CloudFront Distribution Domain Name",
     });
   }
 }
