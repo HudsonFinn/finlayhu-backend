@@ -1,5 +1,6 @@
 import { Stack, StackProps, RemovalPolicy, Duration } from "aws-cdk-lib";
 import { OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
+import { Table } from "aws-cdk-lib/aws-dynamodb";
 import { Rule, Schedule } from "aws-cdk-lib/aws-events";
 import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
 import {
@@ -13,18 +14,22 @@ import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+interface OuraStackProps extends StackProps {
+  healthDataTable?: Table;
+}
+
 export class OuraStack extends Stack {
   public readonly ouraDataBucket: Bucket;
 
-  constructor(scope: Construct, id: string, props?: StackProps) {
+  constructor(scope: Construct, id: string, props?: OuraStackProps) {
     super(scope, id, props);
 
     this.ouraDataBucket = new Bucket(this, "OuraData", {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    const saveOuraDataRole = new Role(this, "save-oura-data-role", {
-      roleName: "save-oura-data-role",
+    const saveOuraDataRole = new Role(this, "sync-oura-data-role", {
+      roleName: "sync-oura-data-role",
       assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
     });
 
@@ -40,8 +45,8 @@ export class OuraStack extends Stack {
       })
     );
 
-    const saveOuraDataFunction = new NodejsFunction(this, "save-oura-data", {
-      entry: "./lib/save-oura-data.function.ts",
+    const saveOuraDataFunction = new NodejsFunction(this, "sync-oura-data", {
+      entry: "./lib/sync-oura-data.function.ts",
       role: saveOuraDataRole,
       timeout: Duration.seconds(10),
       environment: {
@@ -59,6 +64,15 @@ export class OuraStack extends Stack {
 
     // Grant Lambda function write permissions to S3 bucket
     this.ouraDataBucket.grantReadWrite(saveOuraDataFunction);
+
+    // Grant DynamoDB write permissions if table is provided
+    if (props?.healthDataTable) {
+      saveOuraDataFunction.addEnvironment(
+        "TABLE_NAME",
+        props.healthDataTable.tableName
+      );
+      props.healthDataTable.grantWriteData(saveOuraDataFunction);
+    }
 
     // Create EventBridge rule to trigger Lambda hourly
     const hourlyRule = new Rule(this, "HourlyOuraDataRule", {

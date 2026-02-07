@@ -21,6 +21,7 @@ import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Table } from "aws-cdk-lib/aws-dynamodb";
 
 const DOMAIN_NAME = "fhudson.com";
 const SUB_DOMAIN_NAME = "*.fhudson.com";
@@ -29,6 +30,8 @@ const CERTIFICATE_ARN =
 
 interface InfraStackProps extends StackProps {
   ouraDataBucket: Bucket;
+  stravaDataBucket: Bucket;
+  healthDataTable?: Table;
 }
 
 export class InfraStack extends Stack {
@@ -48,8 +51,8 @@ export class InfraStack extends Stack {
     });
 
     // Create Lambda function to fetch Oura data from S3
-    const fetchOuraDataFunction = new NodejsFunction(this, "fetch-oura-data", {
-      entry: "./lib/fetch-oura-data.function.ts",
+    const fetchOuraDataFunction = new NodejsFunction(this, "get-oura-data", {
+      entry: "./lib/get-oura-data.function.ts",
       environment: {
         BUCKET_NAME: props.ouraDataBucket.bucketName,
       },
@@ -58,8 +61,17 @@ export class InfraStack extends Stack {
     // Grant read permissions to the Oura data bucket
     props.ouraDataBucket.grantRead(fetchOuraDataFunction);
 
+    // Grant DynamoDB read permissions if table is provided
+    if (props.healthDataTable) {
+      fetchOuraDataFunction.addEnvironment(
+        "TABLE_NAME",
+        props.healthDataTable.tableName
+      );
+      props.healthDataTable.grantReadData(fetchOuraDataFunction);
+    }
+
     // Create API Gateway for Oura data with proxy integration
-    const ouraDataAPI = new LambdaRestApi(this, "fetch-oura-data-api", {
+    const ouraDataAPI = new LambdaRestApi(this, "get-oura-data-api", {
       handler: fetchOuraDataFunction,
       proxy: false,
     });
@@ -71,6 +83,46 @@ export class InfraStack extends Stack {
     // Add date parameter resource for specific dates
     const ouraDate = ouraRoot.addResource("{date}");
     ouraDate.addMethod("GET");
+
+    // Create Lambda function to fetch Strava data from S3
+    const fetchStravaDataFunction = new NodejsFunction(
+      this,
+      "get-strava-data",
+      {
+        entry: "./lib/get-strava.function.ts",
+        environment: {
+          BUCKET_NAME: props.stravaDataBucket.bucketName,
+        },
+      }
+    );
+
+    // Grant read permissions to the Strava data bucket
+    props.stravaDataBucket.grantRead(fetchStravaDataFunction);
+
+    // Grant DynamoDB read permissions if table is provided
+    if (props.healthDataTable) {
+      fetchStravaDataFunction.addEnvironment(
+        "TABLE_NAME",
+        props.healthDataTable.tableName
+      );
+      props.healthDataTable.grantReadData(fetchStravaDataFunction);
+    }
+
+    // Create API Gateway for Strava data with custom resources
+    const stravaDataAPI = new LambdaRestApi(this, "get-strava-data-api", {
+      handler: fetchStravaDataFunction,
+      proxy: false,
+    });
+
+    // Add root resource for current day's data
+    const stravaRoot = stravaDataAPI.root
+      .addResource("api")
+      .addResource("strava");
+    stravaRoot.addMethod("GET");
+
+    // Add date parameter resource for specific dates
+    const stravaDate = stravaRoot.addResource("{date}");
+    stravaDate.addMethod("GET");
 
     const s3AOI = new OriginAccessIdentity(this, "s3AOI");
     s3Bucket.grantRead(s3AOI);
@@ -103,6 +155,21 @@ export class InfraStack extends Stack {
       minTtl: Duration.seconds(0),
       defaultTtl: Duration.hours(24),
       maxTtl: Duration.hours(24),
+      headerBehavior: CacheHeaderBehavior.allowList(
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers"
+      ),
+      queryStringBehavior: CacheQueryStringBehavior.all(),
+    });
+
+    // Custom cache policy for Strava API (30 minute TTL)
+    const stravaCachePolicy = new CachePolicy(this, "StravaCachePolicy", {
+      cachePolicyName: "StravaDataCachePolicy",
+      comment: "Cache policy for Strava API with 30 minute TTL",
+      minTtl: Duration.seconds(0),
+      defaultTtl: Duration.minutes(30),
+      maxTtl: Duration.minutes(30),
       headerBehavior: CacheHeaderBehavior.allowList(
         "Access-Control-Allow-Origin",
         "Access-Control-Allow-Methods",
@@ -147,6 +214,14 @@ export class InfraStack extends Stack {
             { originPath: `/${ouraDataAPI.deploymentStage.stageName}` }
           ),
           cachePolicy: ouraCachePolicy,
+          allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        },
+        "/api/strava*": {
+          origin: new HttpOrigin(
+            `${stravaDataAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
+            { originPath: `/${stravaDataAPI.deploymentStage.stageName}` }
+          ),
+          cachePolicy: stravaCachePolicy,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
       },

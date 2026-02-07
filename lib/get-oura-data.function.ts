@@ -1,7 +1,18 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { queryByDate, transformOuraItemsToApiResponse } from "./dynamodb-helper";
 
 const s3Client = new S3Client({ region: "us-east-1" });
+
+const fetchFromDynamoDB = async (date: string): Promise<any> => {
+  const items = await queryByDate("OURA", date);
+
+  if (items.length === 0) {
+    throw new Error(`No data found for date: ${date}`);
+  }
+
+  return transformOuraItemsToApiResponse(items);
+};
 
 const fetchFromS3 = async (date: string): Promise<any> => {
   const bucketName = process.env.BUCKET_NAME;
@@ -91,7 +102,21 @@ export const handler = async (
       date = new Date().toISOString().split("T")[0];
     }
 
-    const data = await fetchFromS3(date);
+    // Try DynamoDB first, fall back to S3
+    let data: any;
+    const tableName = process.env.TABLE_NAME;
+
+    if (tableName) {
+      try {
+        data = await fetchFromDynamoDB(date);
+        console.log(`Fetched from DynamoDB: ${date}`);
+      } catch (error) {
+        console.warn("DynamoDB read failed, falling back to S3:", error);
+        data = await fetchFromS3(date);
+      }
+    } else {
+      data = await fetchFromS3(date);
+    }
 
     return {
       statusCode: 200,

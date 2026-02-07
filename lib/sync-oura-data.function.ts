@@ -1,5 +1,7 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { putOuraDayData } from "./dynamodb-helper";
+import { OuraApiResponse } from "./database-types";
 
 const OURA_API_KEY_SECRET_ARN =
   "arn:aws:secretsmanager:us-east-1:457471291771:secret:OURA_API_KEY-tXksnW";
@@ -61,17 +63,26 @@ const fetchData = async () => {
     OURA_API_KEY
   );
 
+  const OURA_WORKOUT_ENDPOINT =
+    "https://api.ouraring.com/v2/usercollection/workout";
+  let workoutDataRequest = fetchEndpointData(
+    OURA_WORKOUT_ENDPOINT,
+    OURA_API_KEY
+  );
+
   const data = await Promise.all([
     sleepDataRequest,
     activityDataRequest,
     readinessDataRequest,
+    workoutDataRequest,
   ]);
-  const [sleepData, activityData, readinessData] = data;
+  const [sleepData, activityData, readinessData, workoutData] = data;
 
   return {
     readiness: readinessData,
     sleep: sleepData,
     activity: activityData,
+    workout: workoutData,
   };
 };
 
@@ -99,6 +110,23 @@ const saveToS3 = async (data: any) => {
   return fileName;
 };
 
+const saveToDynamoDB = async (data: OuraApiResponse): Promise<void> => {
+  const tableName = process.env.TABLE_NAME;
+  if (!tableName) {
+    console.log("TABLE_NAME not set, skipping DynamoDB write");
+    return;
+  }
+
+  const date = new Date().toISOString().split("T")[0];
+  try {
+    await putOuraDayData(date, data);
+    console.log(`Saved to DynamoDB: ${date}`);
+  } catch (error) {
+    console.error("DynamoDB write failed:", error);
+    // Don't fail - S3 write succeeded
+  }
+};
+
 export const handler = async (
   _event: APIGatewayEvent,
   _context: Context
@@ -109,6 +137,9 @@ export const handler = async (
   try {
     todaysData = await fetchData();
     savedFileName = await saveToS3(todaysData);
+
+    // Also save to DynamoDB (dual-write)
+    await saveToDynamoDB(todaysData as unknown as OuraApiResponse);
   } catch (e) {
     return {
       statusCode: 500,
