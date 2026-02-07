@@ -25,6 +25,38 @@ import {
 const client = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(client);
 
+/**
+ * Recursively sanitize data to convert large numbers to strings.
+ * Strava returns some IDs (e.g., segment effort IDs) that exceed Number.MAX_SAFE_INTEGER,
+ * which causes DynamoDB SDK to throw an error.
+ */
+function sanitizeLargeNumbers(obj: unknown): unknown {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === "number") {
+    if (obj > Number.MAX_SAFE_INTEGER || obj < Number.MIN_SAFE_INTEGER) {
+      return obj.toString();
+    }
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeLargeNumbers);
+  }
+
+  if (typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = sanitizeLargeNumbers(value);
+    }
+    return result;
+  }
+
+  return obj;
+}
+
 function getTableName(): string {
   const tableName = process.env.TABLE_NAME;
   if (!tableName) {
@@ -93,6 +125,9 @@ export async function putStravaActivity(
   const activityId = activity.id as number;
   const activityType = (activity.type as string) || "Unknown";
 
+  // Sanitize activity data to handle large numbers (e.g., segment effort IDs)
+  const sanitizedActivity = sanitizeLargeNumbers(activity) as Record<string, unknown>;
+
   const item: StravaDynamoDBActivityItem = {
     PK: buildStravaPK(date),
     SK: buildStravaActivitySK(activityId),
@@ -106,7 +141,7 @@ export async function putStravaActivity(
     ttl,
     activityId,
     activityType,
-    data: activity,
+    data: sanitizedActivity,
   };
 
   await docClient.send(
