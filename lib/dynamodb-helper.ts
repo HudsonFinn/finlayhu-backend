@@ -22,6 +22,9 @@ import {
   calculateTTL,
 } from "./database-types";
 
+const GSI1_INDEX_NAME = "GSI1";
+const GSI2_INDEX_NAME = "GSI2";
+
 const client = new DynamoDBClient({ region: "us-east-1" });
 const docClient = DynamoDBDocumentClient.from(client);
 
@@ -282,4 +285,92 @@ export function transformStravaItemsToApiResponse(
     activities,
     summary,
   };
+}
+
+/**
+ * Query Oura data for a date range using GSI1.
+ * Returns all items for each Oura item type within the date range.
+ */
+export async function queryOuraDateRange(
+  startDate: string,
+  endDate: string
+): Promise<Record<string, unknown>[]> {
+  const tableName = getTableName();
+  const itemTypes: OuraItemType[] = ["SLEEP", "READINESS", "ACTIVITY", "WORKOUT"];
+
+  const results = await Promise.all(
+    itemTypes.map(async (itemType) => {
+      const response = await docClient.send(
+        new QueryCommand({
+          TableName: tableName,
+          IndexName: GSI1_INDEX_NAME,
+          KeyConditionExpression:
+            "GSI1PK = :gsi1pk AND GSI1SK BETWEEN :start AND :end",
+          ExpressionAttributeValues: {
+            ":gsi1pk": buildOuraGSI1PK(itemType),
+            ":start": startDate,
+            ":end": endDate,
+          },
+        })
+      );
+      return response.Items || [];
+    })
+  );
+
+  return results.flat() as Record<string, unknown>[];
+}
+
+/**
+ * Query Strava activities for a date range using GSI1.
+ * Returns all activity items within the date range.
+ */
+export async function queryStravaDateRange(
+  startDate: string,
+  endDate: string
+): Promise<Record<string, unknown>[]> {
+  const tableName = getTableName();
+
+  const response = await docClient.send(
+    new QueryCommand({
+      TableName: tableName,
+      IndexName: GSI1_INDEX_NAME,
+      KeyConditionExpression:
+        "GSI1PK = :gsi1pk AND GSI1SK BETWEEN :start AND :end",
+      ExpressionAttributeValues: {
+        ":gsi1pk": buildStravaGSI1PK(),
+        ":start": startDate,
+        ":end": endDate,
+      },
+    })
+  );
+
+  return (response.Items || []) as Record<string, unknown>[];
+}
+
+/**
+ * Query Strava activities by type for a date range using GSI2.
+ * Returns activities of a specific type (e.g., "Run", "Ride") within the date range.
+ */
+export async function queryStravaByType(
+  activityType: string,
+  startDate: string,
+  endDate: string
+): Promise<Record<string, unknown>[]> {
+  const tableName = getTableName();
+
+  const response = await docClient.send(
+    new QueryCommand({
+      TableName: tableName,
+      IndexName: GSI2_INDEX_NAME,
+      KeyConditionExpression:
+        "GSI2PK = :gsi2pk AND GSI2SK BETWEEN :start AND :end",
+      ExpressionAttributeValues: {
+        ":gsi2pk": buildStravaGSI2PK(activityType),
+        ":start": startDate,
+        ":end": endDate,
+      },
+    })
+  );
+
+  return (response.Items || []) as Record<string, unknown>[];
 }

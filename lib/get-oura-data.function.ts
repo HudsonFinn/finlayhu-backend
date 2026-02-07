@@ -1,8 +1,29 @@
 import { APIGatewayEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { queryByDate, transformOuraItemsToApiResponse } from "./dynamodb-helper";
+import {
+  queryByDate,
+  transformOuraItemsToApiResponse,
+  queryOuraDateRange,
+} from "./dynamodb-helper";
+import { OuraApiResponse } from "./database-types";
 
 const s3Client = new S3Client({ region: "us-east-1" });
+
+const MAX_RANGE_DAYS = 90;
+
+function isValidDate(dateString: string): boolean {
+  const regex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!regex.test(dateString)) return false;
+  const date = new Date(dateString);
+  return date instanceof Date && !isNaN(date.getTime());
+}
+
+function daysBetween(start: string, end: string): number {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const diffTime = endDate.getTime() - startDate.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
 
 const fetchFromDynamoDB = async (date: string): Promise<any> => {
   const items = await queryByDate("OURA", date);
@@ -71,29 +92,120 @@ const fetchFromS3 = async (date: string): Promise<any> => {
   }
 };
 
+async function fetchDateRange(
+  startDate: string,
+  endDate: string
+): Promise<Record<string, OuraApiResponse>> {
+  const items = await queryOuraDateRange(startDate, endDate);
+
+  // Group items by date
+  const dateGroups: Record<string, Record<string, unknown>[]> = {};
+  for (const item of items) {
+    const date = item.date as string;
+    if (!dateGroups[date]) {
+      dateGroups[date] = [];
+    }
+    dateGroups[date].push(item);
+  }
+
+  // Transform each date's items to API response format
+  const result: Record<string, OuraApiResponse> = {};
+  for (const [date, dateItems] of Object.entries(dateGroups)) {
+    result[date] = transformOuraItemsToApiResponse(dateItems);
+  }
+
+  return result;
+}
+
 export const handler = async (
   event: APIGatewayEvent,
   _context: Context
 ): Promise<APIGatewayProxyResult> => {
+  const corsHeaders = {
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS,GET",
+  };
+
   try {
-    // Extract date from path parameter or use today's date
+    // Check for date range query parameters
+    const startParam = event.queryStringParameters?.start;
+    const endParam = event.queryStringParameters?.end;
+
+    // Handle date range query
+    if (startParam || endParam) {
+      // Both start and end are required for range queries
+      if (!startParam || !endParam) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: "Both 'start' and 'end' query parameters are required for range queries",
+          }),
+        };
+      }
+
+      // Validate date formats
+      if (!isValidDate(startParam) || !isValidDate(endParam)) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: "Invalid date format. Use YYYY-MM-DD format (e.g., 2026-02-07)",
+          }),
+        };
+      }
+
+      // Validate start <= end
+      if (startParam > endParam) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: "Start date must be before or equal to end date",
+          }),
+        };
+      }
+
+      // Validate range doesn't exceed maximum
+      const rangeDays = daysBetween(startParam, endParam);
+      if (rangeDays > MAX_RANGE_DAYS) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: `Date range cannot exceed ${MAX_RANGE_DAYS} days. Requested: ${rangeDays} days`,
+          }),
+        };
+      }
+
+      // Fetch date range (DynamoDB only, no S3 fallback for ranges)
+      const dates = await fetchDateRange(startParam, endParam);
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          start: startParam,
+          end: endParam,
+          dates,
+        }),
+      };
+    }
+
+    // Handle single date query (existing behavior)
     let date: string;
 
     if (event.pathParameters && event.pathParameters.date) {
       date = event.pathParameters.date;
 
       // Validate date format (YYYY-MM-DD)
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(date)) {
+      if (!isValidDate(date)) {
         return {
           statusCode: 400,
-          headers: {
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "OPTIONS,GET",
-          },
+          headers: corsHeaders,
           body: JSON.stringify({
-            message: "Invalid date format. Use YYYY-MM-DD format (e.g., 2025-08-15)",
+            message: "Invalid date format. Use YYYY-MM-DD format (e.g., 2026-02-07)",
           }),
         };
       }
@@ -120,11 +232,7 @@ export const handler = async (
 
     return {
       statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "OPTIONS,GET",
-      },
+      headers: corsHeaders,
       body: JSON.stringify({
         date,
         data,
@@ -133,11 +241,7 @@ export const handler = async (
   } catch (error: any) {
     return {
       statusCode: error.message.includes("No data found") ? 404 : 500,
-      headers: {
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "OPTIONS,GET",
-      },
+      headers: corsHeaders,
       body: JSON.stringify({
         message: error.message || "Failed to fetch Oura data",
       }),
