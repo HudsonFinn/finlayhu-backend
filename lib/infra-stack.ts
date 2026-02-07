@@ -48,6 +48,10 @@ export class InfraStack extends Stack {
 
     const quoteOfTheDayAPI = new LambdaRestApi(this, "get-qotd-api", {
       handler: lambdaFunction,
+      deployOptions: {
+        throttlingRateLimit: 10,
+        throttlingBurstLimit: 20,
+      },
     });
 
     // Create Lambda function to fetch Oura data from S3
@@ -74,6 +78,10 @@ export class InfraStack extends Stack {
     const ouraDataAPI = new LambdaRestApi(this, "get-oura-data-api", {
       handler: fetchOuraDataFunction,
       proxy: false,
+      deployOptions: {
+        throttlingRateLimit: 10,
+        throttlingBurstLimit: 20,
+      },
     });
 
     // Add root resource for current day's data
@@ -112,6 +120,10 @@ export class InfraStack extends Stack {
     const stravaDataAPI = new LambdaRestApi(this, "get-strava-data-api", {
       handler: fetchStravaDataFunction,
       proxy: false,
+      deployOptions: {
+        throttlingRateLimit: 10,
+        throttlingBurstLimit: 20,
+      },
     });
 
     // Add root resource for current day's data
