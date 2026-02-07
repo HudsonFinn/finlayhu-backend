@@ -290,16 +290,20 @@ export function transformStravaItemsToApiResponse(
 /**
  * Query Oura data for a date range using GSI1.
  * Returns all items for each Oura item type within the date range.
+ * Optionally filter by a specific item type.
  */
 export async function queryOuraDateRange(
   startDate: string,
-  endDate: string
+  endDate: string,
+  itemType?: OuraItemType
 ): Promise<Record<string, unknown>[]> {
   const tableName = getTableName();
-  const itemTypes: OuraItemType[] = ["SLEEP", "READINESS", "ACTIVITY", "WORKOUT"];
+  const itemTypes: OuraItemType[] = itemType
+    ? [itemType]
+    : ["SLEEP", "READINESS", "ACTIVITY", "WORKOUT"];
 
   const results = await Promise.all(
-    itemTypes.map(async (itemType) => {
+    itemTypes.map(async (type) => {
       const response = await docClient.send(
         new QueryCommand({
           TableName: tableName,
@@ -307,7 +311,7 @@ export async function queryOuraDateRange(
           KeyConditionExpression:
             "GSI1PK = :gsi1pk AND GSI1SK BETWEEN :start AND :end",
           ExpressionAttributeValues: {
-            ":gsi1pk": buildOuraGSI1PK(itemType),
+            ":gsi1pk": buildOuraGSI1PK(type),
             ":start": startDate,
             ":end": endDate,
           },

@@ -13,12 +13,15 @@ Health and fitness data from Oura Ring including sleep, readiness, activity, and
 ```
 GET /api/oura
 GET /api/oura/{date}
+GET /api/oura?type={type}
+GET /api/oura/{date}?type={type}
 ```
 
 **Parameters:**
 - `date` (path, optional): Date in YYYY-MM-DD format. Defaults to today.
+- `type` (query, optional): Filter by data type: `sleep`, `readiness`, `activity`, or `workout`
 
-**Response:**
+**Response (all types):**
 ```json
 {
   "date": "2026-02-07",
@@ -31,27 +34,49 @@ GET /api/oura/{date}
 }
 ```
 
-**Example:**
+**Response (single type):**
+```json
+{
+  "date": "2026-02-07",
+  "type": "sleep",
+  "data": {
+    "sleep": { ... }
+  }
+}
+```
+
+**Examples:**
 ```bash
+# Get all data for today
 curl https://fhudson.com/api/oura
+
+# Get all data for a specific date
 curl https://fhudson.com/api/oura/2026-02-07
+
+# Get only sleep data for today
+curl "https://fhudson.com/api/oura?type=sleep"
+
+# Get only readiness data for a specific date
+curl "https://fhudson.com/api/oura/2026-02-07?type=readiness"
 ```
 
 ### Get Date Range
 
 ```
 GET /api/oura?start={startDate}&end={endDate}
+GET /api/oura?start={startDate}&end={endDate}&type={type}
 ```
 
 **Parameters:**
 - `start` (query, required): Start date in YYYY-MM-DD format
 - `end` (query, required): End date in YYYY-MM-DD format
+- `type` (query, optional): Filter by data type: `sleep`, `readiness`, `activity`, or `workout`
 
 **Constraints:**
 - Maximum range: 90 days
 - Start date must be before or equal to end date
 
-**Response:**
+**Response (all types):**
 ```json
 {
   "start": "2026-02-01",
@@ -69,9 +94,30 @@ GET /api/oura?start={startDate}&end={endDate}
 }
 ```
 
-**Example:**
+**Response (single type):**
+```json
+{
+  "start": "2026-02-01",
+  "end": "2026-02-07",
+  "type": "sleep",
+  "dates": {
+    "2026-02-01": { "sleep": { ... } },
+    "2026-02-02": { "sleep": { ... } },
+    "2026-02-07": { "sleep": { ... } }
+  }
+}
+```
+
+**Examples:**
 ```bash
+# Get all data for date range
 curl "https://fhudson.com/api/oura?start=2026-02-01&end=2026-02-07"
+
+# Get only sleep data for date range
+curl "https://fhudson.com/api/oura?start=2026-02-01&end=2026-02-07&type=sleep"
+
+# Get only activity data for date range
+curl "https://fhudson.com/api/oura?start=2026-02-01&end=2026-02-07&type=activity"
 ```
 
 ---

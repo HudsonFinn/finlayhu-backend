@@ -5,11 +5,28 @@ import {
   transformOuraItemsToApiResponse,
   queryOuraDateRange,
 } from "./dynamodb-helper";
-import { OuraApiResponse } from "./database-types";
+import { OuraApiResponse, OuraItemType } from "./database-types";
 
 const s3Client = new S3Client({ region: "us-east-1" });
 
 const MAX_RANGE_DAYS = 90;
+const VALID_OURA_TYPES = ["sleep", "readiness", "activity", "workout"] as const;
+type OuraTypeParam = (typeof VALID_OURA_TYPES)[number];
+
+function isValidOuraType(type: string): type is OuraTypeParam {
+  return VALID_OURA_TYPES.includes(type.toLowerCase() as OuraTypeParam);
+}
+
+function toOuraItemType(type: OuraTypeParam): OuraItemType {
+  return type.toUpperCase() as OuraItemType;
+}
+
+function filterOuraResponse(
+  data: OuraApiResponse,
+  type: OuraTypeParam
+): Partial<OuraApiResponse> {
+  return { [type]: data[type] };
+}
 
 function isValidDate(dateString: string): boolean {
   const regex = /^\d{4}-\d{2}-\d{2}$/;
@@ -94,9 +111,10 @@ const fetchFromS3 = async (date: string): Promise<any> => {
 
 async function fetchDateRange(
   startDate: string,
-  endDate: string
-): Promise<Record<string, OuraApiResponse>> {
-  const items = await queryOuraDateRange(startDate, endDate);
+  endDate: string,
+  itemType?: OuraItemType
+): Promise<Record<string, Partial<OuraApiResponse>>> {
+  const items = await queryOuraDateRange(startDate, endDate, itemType);
 
   // Group items by date
   const dateGroups: Record<string, Record<string, unknown>[]> = {};
@@ -109,7 +127,7 @@ async function fetchDateRange(
   }
 
   // Transform each date's items to API response format
-  const result: Record<string, OuraApiResponse> = {};
+  const result: Record<string, Partial<OuraApiResponse>> = {};
   for (const [date, dateItems] of Object.entries(dateGroups)) {
     result[date] = transformOuraItemsToApiResponse(dateItems);
   }
@@ -128,9 +146,25 @@ export const handler = async (
   };
 
   try {
-    // Check for date range query parameters
+    // Check for query parameters
     const startParam = event.queryStringParameters?.start;
     const endParam = event.queryStringParameters?.end;
+    const typeParam = event.queryStringParameters?.type;
+
+    // Validate type parameter if provided
+    let ouraItemType: OuraItemType | undefined;
+    if (typeParam) {
+      if (!isValidOuraType(typeParam)) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: `Invalid type. Valid types are: ${VALID_OURA_TYPES.join(", ")}`,
+          }),
+        };
+      }
+      ouraItemType = toOuraItemType(typeParam as OuraTypeParam);
+    }
 
     // Handle date range query
     if (startParam || endParam) {
@@ -180,7 +214,7 @@ export const handler = async (
       }
 
       // Fetch date range (DynamoDB only, no S3 fallback for ranges)
-      const dates = await fetchDateRange(startParam, endParam);
+      const dates = await fetchDateRange(startParam, endParam, ouraItemType);
 
       return {
         statusCode: 200,
@@ -188,6 +222,7 @@ export const handler = async (
         body: JSON.stringify({
           start: startParam,
           end: endParam,
+          ...(typeParam && { type: typeParam.toLowerCase() }),
           dates,
         }),
       };
@@ -230,11 +265,17 @@ export const handler = async (
       data = await fetchFromS3(date);
     }
 
+    // Filter by type if specified
+    if (typeParam && ouraItemType) {
+      data = filterOuraResponse(data, typeParam.toLowerCase() as OuraTypeParam);
+    }
+
     return {
       statusCode: 200,
       headers: corsHeaders,
       body: JSON.stringify({
         date,
+        ...(typeParam && { type: typeParam.toLowerCase() }),
         data,
       }),
     };
