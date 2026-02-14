@@ -5,6 +5,7 @@ import { InfraStack } from "../lib/infra-stack";
 import { OuraStack } from "../lib/oura-stack";
 import { StravaStack } from "../lib/strava-stack";
 import { ChalkboardStack } from "../lib/chalkboard-stack";
+import { QinStack } from "../lib/qin-stack";
 import { DatabaseStack } from "../lib/database-stack";
 
 const app = new cdk.App();
@@ -21,3 +22,4 @@ new InfraStack(app, "InfraStack", {
   healthDataTable: databaseStack.healthDataTable,
 });
 new ChalkboardStack(app, "ChalkboardStack", {});
+new QinStack(app, "QinStack", {});
