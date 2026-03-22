@@ -1,19 +1,10 @@
-import {
-  RemovalPolicy,
-  Stack,
-  StackProps,
-  Duration,
-  CfnOutput,
-} from "aws-cdk-lib";
+import { RemovalPolicy, Stack, StackProps, CfnOutput } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import {
   Distribution,
-  OriginAccessIdentity,
   CachePolicy,
-  CacheHeaderBehavior,
-  CacheQueryStringBehavior,
   AllowedMethods,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
@@ -136,66 +127,16 @@ export class InfraStack extends Stack {
     const stravaDate = stravaRoot.addResource("{date}");
     stravaDate.addMethod("GET");
 
-    const s3AOI = new OriginAccessIdentity(this, "s3AOI");
-    s3Bucket.grantRead(s3AOI);
-
     const certificate = Certificate.fromCertificateArn(
       this,
       "StaticSiteCertificate",
       CERTIFICATE_ARN
     );
 
-    // Custom cache policy for Oura API (1 hour TTL)
-    const ouraCachePolicy = new CachePolicy(this, "OuraCachePolicy", {
-      cachePolicyName: "OuraDataCachePolicy",
-      comment: "Cache policy for Oura API with 1 hour TTL",
-      minTtl: Duration.seconds(0),
-      defaultTtl: Duration.hours(1),
-      maxTtl: Duration.hours(1),
-      headerBehavior: CacheHeaderBehavior.allowList(
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Methods",
-        "Access-Control-Allow-Headers"
-      ),
-      queryStringBehavior: CacheQueryStringBehavior.all(),
-    });
-
-    // Custom cache policy for QOTD API (24 hour TTL)
-    const qotdCachePolicy = new CachePolicy(this, "QOTDCachePolicy", {
-      cachePolicyName: "QOTDCachePolicy",
-      comment: "Cache policy for Quote of the Day API with 24 hour TTL",
-      minTtl: Duration.seconds(0),
-      defaultTtl: Duration.hours(24),
-      maxTtl: Duration.hours(24),
-      headerBehavior: CacheHeaderBehavior.allowList(
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Methods",
-        "Access-Control-Allow-Headers"
-      ),
-      queryStringBehavior: CacheQueryStringBehavior.all(),
-    });
-
-    // Custom cache policy for Strava API (30 minute TTL)
-    const stravaCachePolicy = new CachePolicy(this, "StravaCachePolicy", {
-      cachePolicyName: "StravaDataCachePolicy",
-      comment: "Cache policy for Strava API with 30 minute TTL",
-      minTtl: Duration.seconds(0),
-      defaultTtl: Duration.minutes(30),
-      maxTtl: Duration.minutes(30),
-      headerBehavior: CacheHeaderBehavior.allowList(
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Methods",
-        "Access-Control-Allow-Headers"
-      ),
-      queryStringBehavior: CacheQueryStringBehavior.all(),
-    });
-
     const cloudfront = new Distribution(this, "PersonalSiteCloudfront", {
       domainNames: [DOMAIN_NAME, SUB_DOMAIN_NAME],
       defaultBehavior: {
-        origin: S3BucketOrigin.withOriginAccessIdentity(s3Bucket, {
-          originAccessIdentity: s3AOI,
-        }),
+        origin: S3BucketOrigin.withOriginAccessControl(s3Bucket),
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,
       },
       defaultRootObject: "index.html",
@@ -217,7 +158,7 @@ export class InfraStack extends Stack {
             `${quoteOfTheDayAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${quoteOfTheDayAPI.deploymentStage.stageName}` }
           ),
-          cachePolicy: qotdCachePolicy,
+          cachePolicy: CachePolicy.CACHING_DISABLED,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
         "/api/oura*": {
@@ -225,7 +166,7 @@ export class InfraStack extends Stack {
             `${ouraDataAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${ouraDataAPI.deploymentStage.stageName}` }
           ),
-          cachePolicy: ouraCachePolicy,
+          cachePolicy: CachePolicy.CACHING_DISABLED,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
         "/api/strava*": {
@@ -233,7 +174,7 @@ export class InfraStack extends Stack {
             `${stravaDataAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${stravaDataAPI.deploymentStage.stageName}` }
           ),
-          cachePolicy: stravaCachePolicy,
+          cachePolicy: CachePolicy.CACHING_DISABLED,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
       },

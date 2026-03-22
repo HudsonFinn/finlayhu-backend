@@ -1,5 +1,4 @@
 import { Stack, StackProps, RemovalPolicy, Duration } from "aws-cdk-lib";
-import { OriginAccessIdentity } from "aws-cdk-lib/aws-cloudfront";
 import { Table } from "aws-cdk-lib/aws-dynamodb";
 import { Rule, Schedule } from "aws-cdk-lib/aws-events";
 import { LambdaFunction } from "aws-cdk-lib/aws-events-targets";
@@ -86,8 +85,5 @@ export class OuraStack extends Stack {
 
     // Add Lambda function as target for the EventBridge rule
     hourlyRule.addTarget(new LambdaFunction(saveOuraDataFunction));
-
-    const s3AOI = new OriginAccessIdentity(this, "s3AOI");
-    this.ouraDataBucket.grantRead(s3AOI);
   }
 }

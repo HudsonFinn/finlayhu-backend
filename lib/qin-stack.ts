@@ -4,7 +4,6 @@ import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import {
   Distribution,
-  OriginAccessIdentity,
   CachePolicy,
   Function as CloudFrontFunction,
   FunctionCode,
@@ -27,9 +26,6 @@ export class QinStack extends Stack {
       bucketName: "qin-fhudson-com",
       removalPolicy: RemovalPolicy.RETAIN,
     });
-
-    const qinAOI = new OriginAccessIdentity(this, "QinAOI");
-    qinBucket.grantRead(qinAOI);
 
     const certificate = Certificate.fromCertificateArn(
       this,
@@ -60,9 +56,7 @@ function handler(event) {
     const qinDistribution = new Distribution(this, "QinCloudfront", {
       domainNames: [QIN_DOMAIN],
       defaultBehavior: {
-        origin: S3BucketOrigin.withOriginAccessIdentity(qinBucket, {
-          originAccessIdentity: qinAOI,
-        }),
+        origin: S3BucketOrigin.withOriginAccessControl(qinBucket),
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,
         functionAssociations: [
           {

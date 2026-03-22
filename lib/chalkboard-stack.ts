@@ -4,7 +4,6 @@ import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import {
   Distribution,
-  OriginAccessIdentity,
   CachePolicy,
 } from "aws-cdk-lib/aws-cloudfront";
 import { S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
@@ -25,9 +24,6 @@ export class ChalkboardStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    const chalkboardAOI = new OriginAccessIdentity(this, "ChalkboardAOI");
-    chalkboardBucket.grantRead(chalkboardAOI);
-
     const certificate = Certificate.fromCertificateArn(
       this,
       "ChalkboardCertificate",
@@ -40,9 +36,7 @@ export class ChalkboardStack extends Stack {
       {
         domainNames: [CHALKBOARD_DOMAIN],
         defaultBehavior: {
-          origin: S3BucketOrigin.withOriginAccessIdentity(chalkboardBucket, {
-            originAccessIdentity: chalkboardAOI,
-          }),
+          origin: S3BucketOrigin.withOriginAccessControl(chalkboardBucket),
           cachePolicy: CachePolicy.CACHING_OPTIMIZED,
         },
         defaultRootObject: "index.html",
