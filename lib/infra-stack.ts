@@ -13,6 +13,7 @@ import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Table } from "aws-cdk-lib/aws-dynamodb";
+import { LambdaRestApi as LambdaRestApiType } from "aws-cdk-lib/aws-apigateway";
 
 const DOMAIN_NAME = "fhudson.com";
 const SUB_DOMAIN_NAME = "*.fhudson.com";
@@ -23,6 +24,7 @@ interface InfraStackProps extends StackProps {
   ouraDataBucket: Bucket;
   stravaDataBucket: Bucket;
   healthDataTable?: Table;
+  pulseApi?: LambdaRestApiType;
 }
 
 export class InfraStack extends Stack {
@@ -177,6 +179,20 @@ export class InfraStack extends Stack {
           cachePolicy: CachePolicy.CACHING_DISABLED,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
+        ...(props.pulseApi
+          ? {
+              "/api/pulse*": {
+                origin: new HttpOrigin(
+                  `${props.pulseApi.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
+                  {
+                    originPath: `/${props.pulseApi.deploymentStage.stageName}`,
+                  }
+                ),
+                cachePolicy: CachePolicy.CACHING_DISABLED,
+                allowedMethods: AllowedMethods.ALLOW_ALL,
+              },
+            }
+          : {}),
       },
       certificate,
     });
