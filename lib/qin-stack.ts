@@ -17,6 +17,10 @@ import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 const QIN_DOMAIN = "qin.fhudson.com";
 const CERTIFICATE_ARN =
   "arn:aws:acm:us-east-1:457471291771:certificate/6289263c-411b-4981-9c2a-a872d19fe0e7";
+// Created by CloudFront when the distribution moved to a flat-rate pricing plan;
+// the plan requires a web ACL, so it must stay attached
+const WEB_ACL_ARN =
+  "arn:aws:wafv2:us-east-1:457471291771:global/webacl/CreatedByCloudFront-2416c289/8c67544c-662f-4090-ae88-9b15781613b9";
 
 export class QinStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -55,6 +59,7 @@ function handler(event) {
 
     const qinDistribution = new Distribution(this, "QinCloudfront", {
       domainNames: [QIN_DOMAIN],
+      webAclId: WEB_ACL_ARN,
       defaultBehavior: {
         origin: S3BucketOrigin.withOriginAccessControl(qinBucket),
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,

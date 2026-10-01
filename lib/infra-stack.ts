@@ -5,6 +5,7 @@ import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import {
   Distribution,
   CachePolicy,
+  OriginRequestPolicy,
   AllowedMethods,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
@@ -18,6 +19,10 @@ const DOMAIN_NAME = "fhudson.com";
 const SUB_DOMAIN_NAME = "*.fhudson.com";
 const CERTIFICATE_ARN =
   "arn:aws:acm:us-east-1:457471291771:certificate/6289263c-411b-4981-9c2a-a872d19fe0e7";
+// Created by CloudFront when the distribution moved to a flat-rate pricing plan;
+// the plan requires a web ACL, so it must stay attached
+const WEB_ACL_ARN =
+  "arn:aws:wafv2:us-east-1:457471291771:global/webacl/CreatedByCloudFront-fa0a6908/10a9d705-bfc1-4a1b-a0c9-8e703bc0c14a";
 
 interface InfraStackProps extends StackProps {
   ouraDataBucket: Bucket;
@@ -135,6 +140,7 @@ export class InfraStack extends Stack {
 
     const cloudfront = new Distribution(this, "PersonalSiteCloudfront", {
       domainNames: [DOMAIN_NAME, SUB_DOMAIN_NAME],
+      webAclId: WEB_ACL_ARN,
       defaultBehavior: {
         origin: S3BucketOrigin.withOriginAccessControl(s3Bucket),
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,
@@ -159,6 +165,7 @@ export class InfraStack extends Stack {
             { originPath: `/${quoteOfTheDayAPI.deploymentStage.stageName}` }
           ),
           cachePolicy: CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
         "/api/oura*": {
@@ -167,6 +174,7 @@ export class InfraStack extends Stack {
             { originPath: `/${ouraDataAPI.deploymentStage.stageName}` }
           ),
           cachePolicy: CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
         "/api/strava*": {
@@ -175,6 +183,7 @@ export class InfraStack extends Stack {
             { originPath: `/${stravaDataAPI.deploymentStage.stageName}` }
           ),
           cachePolicy: CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
       },

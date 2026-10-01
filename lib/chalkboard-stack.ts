@@ -14,6 +14,10 @@ import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 const CHALKBOARD_DOMAIN = "chalkboard.fhudson.com";
 const CERTIFICATE_ARN =
   "arn:aws:acm:us-east-1:457471291771:certificate/6289263c-411b-4981-9c2a-a872d19fe0e7";
+// Created by CloudFront when the distribution moved to a flat-rate pricing plan;
+// the plan requires a web ACL, so it must stay attached
+const WEB_ACL_ARN =
+  "arn:aws:wafv2:us-east-1:457471291771:global/webacl/CreatedByCloudFront-abc97687/5f7e76da-ec65-46cc-b6bf-cee5f7483183";
 
 export class ChalkboardStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -35,6 +39,7 @@ export class ChalkboardStack extends Stack {
       "ChalkboardCloudfront",
       {
         domainNames: [CHALKBOARD_DOMAIN],
+        webAclId: WEB_ACL_ARN,
         defaultBehavior: {
           origin: S3BucketOrigin.withOriginAccessControl(chalkboardBucket),
           cachePolicy: CachePolicy.CACHING_OPTIMIZED,
