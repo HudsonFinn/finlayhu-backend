@@ -8,7 +8,7 @@ import {
   Role,
   ServicePrincipal,
 } from "aws-cdk-lib/aws-iam";
-import { LayerVersion } from "aws-cdk-lib/aws-lambda";
+import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
@@ -47,6 +47,7 @@ export class StravaStack extends Stack {
 
     const syncStravaFunction = new NodejsFunction(this, "sync-strava", {
       entry: "./lib/sync-strava.function.ts",
+      runtime: Runtime.NODEJS_22_X,
       role: syncStravaDataRole,
       timeout: Duration.seconds(30),
       environment: {

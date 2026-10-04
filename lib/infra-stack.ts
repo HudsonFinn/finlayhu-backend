@@ -9,6 +9,7 @@ import {
   AllowedMethods,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
+import { Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
@@ -40,6 +41,7 @@ export class InfraStack extends Stack {
 
     const lambdaFunction = new NodejsFunction(this, "get-qotd", {
       entry: "./lib/get-qotd.function.ts",
+      runtime: Runtime.NODEJS_22_X,
     });
 
     const quoteOfTheDayAPI = new LambdaRestApi(this, "get-qotd-api", {
@@ -53,6 +55,7 @@ export class InfraStack extends Stack {
     // Create Lambda function to fetch Oura data from S3
     const fetchOuraDataFunction = new NodejsFunction(this, "get-oura-data", {
       entry: "./lib/get-oura-data.function.ts",
+      runtime: Runtime.NODEJS_22_X,
       environment: {
         BUCKET_NAME: props.ouraDataBucket.bucketName,
       },
@@ -94,6 +97,7 @@ export class InfraStack extends Stack {
       "get-strava-data",
       {
         entry: "./lib/get-strava.function.ts",
+        runtime: Runtime.NODEJS_22_X,
         environment: {
           BUCKET_NAME: props.stravaDataBucket.bucketName,
         },
@@ -196,6 +200,7 @@ export class InfraStack extends Stack {
       "invalidate-cloudfront",
       {
         entry: "./lib/invalidate-cloudfront.function.ts",
+        runtime: Runtime.NODEJS_22_X,
         environment: {
           DISTRIBUTION_ID: cloudfront.distributionId,
         },

@@ -8,6 +8,7 @@ import {
 } from "aws-cdk-lib/aws-cloudfront";
 import { S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+import { Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 
@@ -67,6 +68,7 @@ export class ChalkboardStack extends Stack {
       "invalidate-cloudfront",
       {
         entry: "./lib/invalidate-cloudfront.function.ts",
+        runtime: Runtime.NODEJS_22_X,
         environment: {
           DISTRIBUTION_ID: chalkboardDistribution.distributionId,
         },

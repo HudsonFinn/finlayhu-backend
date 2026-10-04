@@ -8,7 +8,7 @@ import {
   Role,
   ServicePrincipal,
 } from "aws-cdk-lib/aws-iam";
-import { LayerVersion } from "aws-cdk-lib/aws-lambda";
+import { LayerVersion, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Bucket } from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
@@ -46,6 +46,7 @@ export class OuraStack extends Stack {
 
     const saveOuraDataFunction = new NodejsFunction(this, "sync-oura-data", {
       entry: "./lib/sync-oura-data.function.ts",
+      runtime: Runtime.NODEJS_22_X,
       role: saveOuraDataRole,
       timeout: Duration.seconds(10),
       environment: {
