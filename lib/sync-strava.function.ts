@@ -20,6 +20,10 @@ const STRAVA_SECRETS_ARN = process.env.STRAVA_SECRETS_ARN!;
 // `after` filter is on start time, so look back far enough to catch late uploads.
 const DEFAULT_LOOKBACK_DAYS = 3;
 
+const DAY = 86400;
+// Timezones run from UTC-12 to UTC+14
+const MAX_UTC_OFFSET = 14 * 3600;
+
 interface SyncEvent {
   // Override for manual backfills, e.g. `{"lookbackDays": 14}`
   lookbackDays?: number;
@@ -152,6 +156,11 @@ function calculateSummary(activities: StravaActivity[]) {
   return summary;
 }
 
+/** The UTC calendar date of a Unix timestamp, e.g. "2026-09-22". */
+function utcDate(seconds: number): string {
+  return new Date(seconds * 1000).toISOString().split("T")[0];
+}
+
 /** The local calendar date an activity happened on, e.g. "2026-09-22". */
 function activityDate(activity: StravaActivity): string {
   return (activity.start_date_local || activity.start_date).slice(0, 10);
@@ -186,8 +195,12 @@ export async function handler(event?: SyncEvent): Promise<LambdaResponse> {
       console.log("Token refreshed and updated");
     }
 
-    // Fetch activities that started within the lookback window
-    const windowStart = now - lookbackDays * 86400;
+    // Summaries are rewritten for the last `lookbackDays` days. Activities are
+    // dated in local time, and a local day can start up to 14 hours before the
+    // UTC day, so fetch from that much earlier to see every activity on them
+    const firstSummaryDay = utcDate(now - (lookbackDays - 1) * DAY);
+    const windowStart =
+      Date.parse(`${firstSummaryDay}T00:00:00Z`) / 1000 - MAX_UTC_OFFSET;
     const activities = await fetchActivities(
       secrets.STRAVA_ACCESS_TOKEN,
       windowStart
@@ -239,12 +252,14 @@ export async function handler(event?: SyncEvent): Promise<LambdaResponse> {
           }
         }
 
-        // Rewrite summaries for the days fully inside the window (the oldest
-        // day is only partly covered, so its summary is left alone)
-        for (let i = 0; i < lookbackDays; i++) {
-          const summaryDay = new Date((now - i * 86400) * 1000)
-            .toISOString()
-            .split("T")[0];
+        // Rewrite summaries from the first fully covered day up to today, or
+        // later if an activity's local date is already tomorrow in UTC
+        const lastSummaryDay = [utcDate(now), ...byDate.keys()].sort().pop()!;
+        for (
+          let summaryDay = firstSummaryDay;
+          summaryDay <= lastSummaryDay;
+          summaryDay = utcDate(Date.parse(`${summaryDay}T00:00:00Z`) / 1000 + DAY)
+        ) {
           await putStravaSummary(
             summaryDay,
             calculateSummary(byDate.get(summaryDay) || [])
