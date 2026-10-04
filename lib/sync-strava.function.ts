@@ -16,6 +16,15 @@ const secretsClient = new SecretsManagerClient({ region: "us-east-1" });
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const STRAVA_SECRETS_ARN = process.env.STRAVA_SECRETS_ARN!;
 
+// Activities are often uploaded a day or two after they happen, and Strava's
+// `after` filter is on start time, so look back far enough to catch late uploads.
+const DEFAULT_LOOKBACK_DAYS = 3;
+
+interface SyncEvent {
+  // Override for manual backfills, e.g. `{"lookbackDays": 14}`
+  lookbackDays?: number;
+}
+
 interface LambdaResponse {
   statusCode: number;
   headers: Record<string, string>;
@@ -85,7 +94,7 @@ async function fetchActivities(
   afterTimestamp: number
 ): Promise<StravaActivity[]> {
   const response = await fetch(
-    `https://www.strava.com/api/v3/athlete/activities?after=${afterTimestamp}&per_page=30`,
+    `https://www.strava.com/api/v3/athlete/activities?after=${afterTimestamp}&per_page=100`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -143,9 +152,26 @@ function calculateSummary(activities: StravaActivity[]) {
   return summary;
 }
 
-export async function handler(): Promise<LambdaResponse> {
+/** The local calendar date an activity happened on, e.g. "2026-09-22". */
+function activityDate(activity: StravaActivity): string {
+  return (activity.start_date_local || activity.start_date).slice(0, 10);
+}
+
+function groupByDate(
+  activities: StravaActivity[]
+): Map<string, StravaActivity[]> {
+  const byDate = new Map<string, StravaActivity[]>();
+  for (const activity of activities) {
+    const date = activityDate(activity);
+    byDate.set(date, [...(byDate.get(date) || []), activity]);
+  }
+  return byDate;
+}
+
+export async function handler(event?: SyncEvent): Promise<LambdaResponse> {
   try {
-    console.log("Starting Strava data sync");
+    const lookbackDays = event?.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
+    console.log(`Starting Strava data sync (lookback ${lookbackDays} days)`);
 
     // Get secrets
     let secrets = await getSecrets();
@@ -160,11 +186,11 @@ export async function handler(): Promise<LambdaResponse> {
       console.log("Token refreshed and updated");
     }
 
-    // Fetch activities from the last 24 hours
-    const yesterday = now - 86400;
+    // Fetch activities that started within the lookback window
+    const windowStart = now - lookbackDays * 86400;
     const activities = await fetchActivities(
       secrets.STRAVA_ACCESS_TOKEN,
-      yesterday
+      windowStart
     );
     console.log(`Found ${activities.length} activities`);
 
@@ -202,13 +228,31 @@ export async function handler(): Promise<LambdaResponse> {
     const tableName = process.env.TABLE_NAME;
     if (tableName) {
       try {
-        // Write each activity
-        for (const activity of detailedActivities) {
-          await putStravaActivity(date, activity as unknown as Record<string, unknown>);
+        // Key each activity by the day it happened, not the day it was synced
+        const byDate = groupByDate(detailedActivities);
+        for (const [activityDay, dayActivities] of byDate) {
+          for (const activity of dayActivities) {
+            await putStravaActivity(
+              activityDay,
+              activity as unknown as Record<string, unknown>
+            );
+          }
         }
-        // Write the summary
-        await putStravaSummary(date, dayData.summary);
-        console.log(`Saved to DynamoDB: ${date} (${detailedActivities.length} activities)`);
+
+        // Rewrite summaries for the days fully inside the window (the oldest
+        // day is only partly covered, so its summary is left alone)
+        for (let i = 0; i < lookbackDays; i++) {
+          const summaryDay = new Date((now - i * 86400) * 1000)
+            .toISOString()
+            .split("T")[0];
+          await putStravaSummary(
+            summaryDay,
+            calculateSummary(byDate.get(summaryDay) || [])
+          );
+        }
+        console.log(
+          `Saved to DynamoDB: ${detailedActivities.length} activities across ${byDate.size} days`
+        );
       } catch (error) {
         console.error("DynamoDB write failed:", error);
         // Don't fail - S3 write succeeded
