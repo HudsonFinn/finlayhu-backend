@@ -3,10 +3,15 @@ import { Construct } from "constructs";
 import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
 import {
+  AccessLevel,
   Distribution,
   CachePolicy,
   OriginRequestPolicy,
   AllowedMethods,
+  Function as CloudFrontFunction,
+  FunctionCode,
+  FunctionEventType,
+  FunctionRuntime,
 } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
 import { Runtime } from "aws-cdk-lib/aws-lambda";
@@ -142,26 +147,37 @@ export class InfraStack extends Stack {
       CERTIFICATE_ARN
     );
 
+    // The site is a single-page app: every page path serves index.html with a 200, and the app
+    // routes in the browser. Done on the site's behaviour only, not with distribution-wide error
+    // responses, so /api/* keeps its real status codes and JSON error bodies. Paths with a file
+    // extension (assets, favicons) go to S3 untouched, so a missing file is a real 404.
+    const spaRewrite = new CloudFrontFunction(this, "SpaRewrite", {
+      runtime: FunctionRuntime.JS_2_0,
+      comment: "Serve index.html for page paths (no file extension)",
+      code: FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var last = request.uri.split('/').pop();
+  if (last.indexOf('.') === -1) request.uri = '/index.html';
+  return request;
+}`),
+    });
+
     const cloudfront = new Distribution(this, "PersonalSiteCloudfront", {
       domainNames: [DOMAIN_NAME, SUB_DOMAIN_NAME],
       webAclId: WEB_ACL_ARN,
       defaultBehavior: {
-        origin: S3BucketOrigin.withOriginAccessControl(s3Bucket),
+        // LIST lets S3 answer a missing file with 404 rather than 403. Query strings aren't
+        // forwarded to S3 (CACHING_OPTIMIZED), so this can't be used to list the bucket.
+        origin: S3BucketOrigin.withOriginAccessControl(s3Bucket, {
+          originAccessLevels: [AccessLevel.READ, AccessLevel.LIST],
+        }),
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,
+        functionAssociations: [
+          { function: spaRewrite, eventType: FunctionEventType.VIEWER_REQUEST },
+        ],
       },
       defaultRootObject: "index.html",
-      errorResponses: [
-        {
-          httpStatus: 404,
-          responseHttpStatus: 404,
-          responsePagePath: "/index.html",
-        },
-        {
-          httpStatus: 403,
-          responseHttpStatus: 403,
-          responsePagePath: "/index.html",
-        },
-      ],
       additionalBehaviors: {
         "/api/qotd": {
           origin: new HttpOrigin(
