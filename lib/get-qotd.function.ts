@@ -11,7 +11,10 @@ type Response = Array<Quote> | undefined;
 
 const getQuote = async (): Promise<Quote> => {
   const quoteOfTheDayUrl = "https://zenquotes.io/api/today";
-  const response = await fetch(quoteOfTheDayUrl);
+  // Fail cleanly before the Lambda's own timeout, so the caller gets a 500 rather than a 502
+  const response = await fetch(quoteOfTheDayUrl, {
+    signal: AbortSignal.timeout(5000),
+  });
   const json = (await response.json()) as Response;
 
   if (!json || !Array.isArray(json) || json.length < 1)
@@ -36,6 +39,7 @@ export const handler = async (
         "Access-Control-Allow-Headers": "Content-Type",
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+        "Cache-Control": "no-store",
       },
       body: JSON.stringify({
         message: `Failed to fetch data from https://zenquotes.io/api/today: ${e}`,
@@ -49,6 +53,8 @@ export const handler = async (
       "Access-Control-Allow-Headers": "Content-Type",
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+      // CloudFront keeps the quote for an hour, so zenquotes sees a few dozen requests a day
+      "Cache-Control": "public, max-age=3600",
     },
     body: JSON.stringify(todaysData),
   };

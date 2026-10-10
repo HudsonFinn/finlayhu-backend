@@ -1,4 +1,10 @@
-import { RemovalPolicy, Stack, StackProps, CfnOutput } from "aws-cdk-lib";
+import {
+  Duration,
+  RemovalPolicy,
+  Stack,
+  StackProps,
+  CfnOutput,
+} from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { Bucket, EventType } from "aws-cdk-lib/aws-s3";
 import { LambdaDestination } from "aws-cdk-lib/aws-s3-notifications";
@@ -44,9 +50,12 @@ export class InfraStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
+    // API handlers get 10 s: the 3 s default is too tight for a cold start plus a slow upstream,
+    // and API Gateway answers a timed-out Lambda with a bare 502
     const lambdaFunction = new NodejsFunction(this, "get-qotd", {
       entry: "./lib/get-qotd.function.ts",
       runtime: Runtime.NODEJS_22_X,
+      timeout: Duration.seconds(10),
     });
 
     const quoteOfTheDayAPI = new LambdaRestApi(this, "get-qotd-api", {
@@ -61,6 +70,7 @@ export class InfraStack extends Stack {
     const fetchOuraDataFunction = new NodejsFunction(this, "get-oura-data", {
       entry: "./lib/get-oura-data.function.ts",
       runtime: Runtime.NODEJS_22_X,
+      timeout: Duration.seconds(10),
       environment: {
         BUCKET_NAME: props.ouraDataBucket.bucketName,
       },
@@ -103,6 +113,7 @@ export class InfraStack extends Stack {
       {
         entry: "./lib/get-strava.function.ts",
         runtime: Runtime.NODEJS_22_X,
+        timeout: Duration.seconds(10),
         environment: {
           BUCKET_NAME: props.stravaDataBucket.bucketName,
         },
@@ -184,7 +195,9 @@ function handler(event) {
             `${quoteOfTheDayAPI.restApiId}.execute-api.${this.region}.${this.urlSuffix}`,
             { originPath: `/${quoteOfTheDayAPI.deploymentStage.stageName}` }
           ),
-          cachePolicy: CachePolicy.CACHING_DISABLED,
+          // The quote changes daily; the Lambda's Cache-Control sets how long the edge keeps it.
+          // A managed policy, since the flat-rate plan doesn't allow custom cache policies
+          cachePolicy: CachePolicy.CACHING_OPTIMIZED,
           originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         },
